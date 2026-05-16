@@ -1,4 +1,6 @@
-import { createWorker } from 'tesseract.js';
+import { existsSync } from 'fs';
+import path from 'path';
+import { createWorker, PSM } from 'tesseract.js';
 import sharp from 'sharp';
 
 export type OcrNutritionResult = {
@@ -23,19 +25,25 @@ export type OcrNutritionResult = {
  * - Normalize contrast
  * - Resize to a sensible width if huge (phone photos can be 4000+px)
  */
-async function preprocessImages(buffer: Buffer): Promise<Buffer[]> {
+const isVercel = process.env.VERCEL === '1';
+
+async function preprocessImages(buffer: Buffer, fast = false): Promise<Buffer[]> {
   const image = sharp(buffer);
   const metadata = await image.metadata();
   const stats = await image.clone().grayscale().stats();
   const meanBrightness = stats.channels[0]?.mean ?? 255;
 
   const pipeline = image
-    .resize({ width: 1600, withoutEnlargement: true })
+    .resize({ width: fast ? 1400 : 1600, withoutEnlargement: true })
     .grayscale()
     .normalize()
     .sharpen();
 
   const normal = await (metadata.format === 'webp' ? pipeline : pipeline.png()).toBuffer();
+
+  if (fast) {
+    return [normal];
+  }
 
   if (meanBrightness >= 115) {
     const upscaled = await sharp(buffer)
@@ -71,13 +79,51 @@ async function preprocessImages(buffer: Buffer): Promise<Buffer[]> {
 /**
  * Run Tesseract OCR on a preprocessed image buffer.
  */
-async function runTesseract(buffer: Buffer): Promise<string> {
-  const worker = await createWorker('eng');
+type TesseractWorker = Awaited<ReturnType<typeof createWorker>>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __ocrWorkerPromise: Promise<TesseractWorker> | undefined;
+}
+
+function createOcrWorker(): Promise<TesseractWorker> {
+  const trainedDataPath = path.join(process.cwd(), 'eng.traineddata');
+  const options = existsSync(trainedDataPath)
+    ? { langPath: process.cwd(), cacheMethod: 'none', gzip: false }
+    : {};
+
+  return createWorker('eng', 1, options).then(async (worker) => {
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+      preserve_interword_spaces: '1',
+      user_defined_dpi: '300',
+    });
+    return worker;
+  });
+}
+
+async function getOcrWorker(): Promise<TesseractWorker> {
+  if (!globalThis.__ocrWorkerPromise) {
+    globalThis.__ocrWorkerPromise = createOcrWorker();
+  }
+
+  return globalThis.__ocrWorkerPromise;
+}
+
+async function runTesseract(buffer: Buffer, keepWorkerAlive = false): Promise<string> {
+  const worker = keepWorkerAlive ? await getOcrWorker() : await createOcrWorker();
   try {
-    const { data } = await worker.recognize(buffer);
+    const { data } = await worker.recognize(buffer, {}, { text: true });
     return data.text;
+  } catch (error) {
+    if (keepWorkerAlive) {
+      globalThis.__ocrWorkerPromise = undefined;
+    }
+    throw error;
   } finally {
-    await worker.terminate();
+    if (!keepWorkerAlive) {
+      await worker.terminate();
+    }
   }
 }
 
@@ -347,11 +393,11 @@ export function parseNutrition(rawText: string): Omit<OcrNutritionResult, 'rawTe
 }
 
 export async function extractNutritionFromImage(buffer: Buffer): Promise<OcrNutritionResult> {
-  const processedVariants = await preprocessImages(buffer);
+  const processedVariants = await preprocessImages(buffer, isVercel);
   const results: OcrNutritionResult[] = [];
 
   for (const processed of processedVariants) {
-    const rawText = await runTesseract(processed);
+    const rawText = await runTesseract(processed, isVercel);
     const parsed = parseNutrition(rawText);
     results.push({ rawText, ...parsed });
   }
