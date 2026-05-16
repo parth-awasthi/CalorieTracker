@@ -1,0 +1,49 @@
+// Prisma schema — SQLite for local dev, easy to switch to PostgreSQL for Vercel
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  name        String
+  servingBase Float       @default(100)
+  servingUnit String      @default("g")
+  calories    Float
+  protein     Float
+  carbs       Float
+  fat         Float
+  fiber       Float       @default(0)
+  sugar       Float       @default(0)
+  sodium      Float       @default(0)
+  imageUrl    String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  mealEntries MealEntry[]
+
+  @@index([name])
+}
+
+model MealEntry {
+  id                 String   @id @default(cuid())
+  date               DateTime
+  mealType           String
+  quantityInGrams    Float
+  calculatedCalories Float
+  calculatedProtein  Float
+  calculatedCarbs    Float
+  calculatedFat      Float
+  calculatedFiber    Float
+  calculatedSugar    Float
+  calculatedSodium   Float
+  productId          String
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdAt          DateTime @default(now())
+
+  @@index([date])
+  @@index([productId])
+}
