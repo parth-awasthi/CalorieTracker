@@ -14,3 +14,4 @@ public/uploads/*
 .vercel
 tsconfig.tsbuildinfo
 eng.traineddata
+.local-data/
