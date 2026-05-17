@@ -8,8 +8,42 @@ import { toast } from 'sonner';
 import type { OcrNutritionResult } from '@/lib/ocr';
 import { parseNutrition } from '@/lib/nutrition-label-parser';
 
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
+const IMAGE_EXTENSIONS = /\.(avif|heic|heif|jpeg|jpg|png|webp)$/i;
+const inputId = 'nutrition-label-image';
+
+function isImageFile(file: File) {
+  return file.type.startsWith('image/') || IMAGE_EXTENSIONS.test(file.name);
+}
+
+async function loadImageElement(file: File): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = url;
+    await image.decode();
+    return image;
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+}
+
+async function loadDrawableImage(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  if ('createImageBitmap' in window) {
+    try {
+      return await createImageBitmap(file);
+    } catch {
+      return loadImageElement(file);
+    }
+  }
+
+  return loadImageElement(file);
+}
+
 async function imageToOcrBlob(file: File): Promise<Blob> {
-  const image = await createImageBitmap(file);
+  const image = await loadDrawableImage(file);
   const maxWidth = 1400;
   const scale = Math.min(1, maxWidth / image.width);
   const width = Math.max(1, Math.round(image.width * scale));
@@ -37,6 +71,60 @@ async function imageToOcrBlob(file: File): Promise<Blob> {
   return new Promise((resolve) => {
     canvas.toBlob((blob) => resolve(blob ?? file), 'image/png');
   });
+}
+
+async function imageToUploadFile(file: File): Promise<File> {
+  if (file.size <= 3.5 * 1024 * 1024 && !/\.(heic|heif)$/i.test(file.name)) {
+    return file;
+  }
+
+  const image = await loadDrawableImage(file);
+  const maxWidth = 1600;
+  const scale = Math.min(1, maxWidth / image.width);
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return file;
+
+  ctx.drawImage(image, 0, 0, width, height);
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', 0.84);
+  });
+
+  if (!blob) return file;
+
+  const baseName = file.name.replace(/\.[^.]+$/, '') || 'nutrition-label';
+  return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+}
+
+function emptyOcrResult(): OcrNutritionResult {
+  return {
+    rawText: '',
+    servingBase: 100,
+    servingUnit: 'g',
+    calories: 0,
+    protein: 0,
+    carbs: 0,
+    fat: 0,
+    fiber: 0,
+    sugar: 0,
+    sodium: 0,
+    confidence: {
+      calories: false,
+      protein: false,
+      carbs: false,
+      fat: false,
+      fiber: false,
+      sugar: false,
+      sodium: false,
+      servingBase: false,
+    },
+  };
 }
 
 async function runBrowserOcr(file: File): Promise<OcrNutritionResult> {
@@ -73,12 +161,12 @@ export function OcrUpload({
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
-    if (!file.type.startsWith('image/')) {
+    if (!isImageFile(file)) {
       toast.error('Please select an image file.');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('Image is larger than 10MB.');
+    if (file.size > MAX_IMAGE_SIZE) {
+      toast.error('Image is larger than 20MB.');
       return;
     }
 
@@ -86,21 +174,36 @@ export function OcrUpload({
     setLoading(true);
 
     try {
-      const buildFormData = () => {
+      const uploadFile = await imageToUploadFile(file).catch(() => file);
+      const buildFormData = (image: File) => {
         const fd = new FormData();
-        fd.append('image', file);
+        fd.append('image', image);
         return fd;
       };
 
-      const [ocrData, uploadRes] = await Promise.all([
+      const [ocrResult, uploadResult] = await Promise.allSettled([
         runBrowserOcr(file),
-        fetch('/api/upload', { method: 'POST', body: buildFormData() }),
+        fetch('/api/upload', { method: 'POST', body: buildFormData(uploadFile) }),
       ]);
 
-      const upload = uploadRes.ok ? await uploadRes.json() : { url: undefined };
+      const upload =
+        uploadResult.status === 'fulfilled' && uploadResult.value.ok
+          ? await uploadResult.value.json()
+          : { url: undefined };
 
-      onExtracted({ ...ocrData, imageUrl: upload.url });
-      toast.success('Nutrition info extracted. Please verify the values.');
+      if (ocrResult.status === 'fulfilled') {
+        onExtracted({ ...ocrResult.value, imageUrl: upload.url });
+        toast.success('Nutrition info extracted. Please verify the values.');
+        return;
+      }
+
+      if (upload.url) {
+        onExtracted({ ...emptyOcrResult(), imageUrl: upload.url });
+        toast.error('Image uploaded, but OCR could not read it. Enter the values manually.');
+        return;
+      }
+
+      throw ocrResult.reason;
     } catch (e: any) {
       toast.error(e.message || 'Could not process image');
     } finally {
@@ -111,9 +214,9 @@ export function OcrUpload({
   return (
     <Card>
       <CardContent className="p-6">
-        <div
+        <label
+          htmlFor={inputId}
           className="relative flex min-h-[200px] cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-muted-foreground/30 p-6 transition-colors hover:border-primary hover:bg-accent/40"
-          onClick={() => inputRef.current?.click()}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
@@ -128,7 +231,7 @@ export function OcrUpload({
               <Upload className="h-10 w-10 text-muted-foreground" />
               <div className="text-center">
                 <p className="text-sm font-medium">Tap to upload nutrition label</p>
-                <p className="text-xs text-muted-foreground">PNG / JPG, up to 10MB</p>
+                <p className="text-xs text-muted-foreground">Camera or gallery, up to 20MB</p>
               </div>
             </>
           )}
@@ -140,30 +243,27 @@ export function OcrUpload({
               </div>
             </div>
           )}
-        </div>
+        </label>
 
         <input
+          id={inputId}
           ref={inputRef}
           type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
+          accept="image/*,.heic,.heif"
+          className="sr-only"
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) handleFile(f);
+            e.target.value = '';
           }}
         />
 
         <div className="mt-3 flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="flex-1"
-            onClick={() => inputRef.current?.click()}
-            disabled={loading}
-          >
-            <Camera className="mr-2 h-4 w-4" />
-            {preview ? 'Try another image' : 'Choose image'}
+          <Button type="button" variant="outline" className="flex-1" disabled={loading} asChild>
+            <label htmlFor={inputId} className="cursor-pointer">
+              <Camera className="mr-2 h-4 w-4" />
+              {preview ? 'Try another image' : 'Choose image'}
+            </label>
           </Button>
         </div>
       </CardContent>
