@@ -127,10 +127,20 @@ function emptyOcrResult(): OcrNutritionResult {
   };
 }
 
-async function runBrowserOcr(file: File): Promise<OcrNutritionResult> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+
+    promise
+      .then(resolve, reject)
+      .finally(() => window.clearTimeout(timeout));
+  });
+}
+
+async function runBrowserOcrOnce(file: File): Promise<OcrNutritionResult> {
   const { createWorker, PSM } = await import('tesseract.js');
   const worker = await createWorker('eng', 1, {
-    langPath: '/tessdata',
+    langPath: `${window.location.origin}/tessdata`,
     cacheMethod: 'none',
     gzip: false,
   });
@@ -149,6 +159,14 @@ async function runBrowserOcr(file: File): Promise<OcrNutritionResult> {
   } finally {
     await worker.terminate();
   }
+}
+
+function runBrowserOcr(file: File): Promise<OcrNutritionResult> {
+  return withTimeout(
+    runBrowserOcrOnce(file),
+    45000,
+    'OCR is taking too long. The image was not read.',
+  );
 }
 
 export function OcrUpload({

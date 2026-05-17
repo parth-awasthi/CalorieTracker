@@ -73,10 +73,15 @@ function repairTableRowValue(
   nutrient: keyof Omit<ParsedNutritionResult, 'confidence'>,
   servingBase: number,
   tableHasPer100Column: boolean,
+  servingColumnIndex: number | null,
 ): number {
   const first = numbers[0];
   const second = numbers[1];
   const repairedFirst = repairMissingDecimal(first, nutrient);
+
+  if (servingColumnIndex !== null && numbers[servingColumnIndex] !== undefined) {
+    return repairMissingDecimal(numbers[servingColumnIndex], nutrient);
+  }
 
   if (tableHasPer100Column && servingBase !== 100 && second !== undefined && Number.isInteger(first)) {
     for (const secondCandidate of decimalCandidates(second, nutrient)) {
@@ -119,13 +124,74 @@ function repairMacroByCalories(
 
 function numbersFromLine(lines: string[], aliases: RegExp[]): number[] | null {
   for (const alias of aliases) {
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
       if (!alias.test(line)) continue;
 
       const numbers = getNumbers(line);
       if (numbers.length) return numbers;
+
+      const followingNumbers: number[] = [];
+      for (const nextLine of lines.slice(index + 1, index + 6)) {
+        if (isNutrientLabelLine(nextLine)) break;
+
+        const nextNumbers = getNumbers(nextLine);
+        if (nextNumbers.length === 1) {
+          followingNumbers.push(nextNumbers[0]);
+        } else if (nextNumbers.length > 1) {
+          followingNumbers.push(...nextNumbers);
+        }
+      }
+
+      if (followingNumbers.length) return followingNumbers;
     }
   }
+
+  return null;
+}
+
+function isNutrientLabelLine(line: string): boolean {
+  return /\b(?:energy|calories|protein|total\s+fat|fats?|saturated\s+fat|trans\s+fat|cholesterol|carbohydrates?|carbs|dietary\s+fib(?:er|re)|fib(?:er|re)|total\s+sugars?|sugars?|added\s+sugars?|total\s+salt|sodium|probiotics)\b/.test(line);
+}
+
+function detectServingColumnIndex(
+  lines: string[],
+  servingBase: number,
+  servingUnit: ParsedNutritionResult['servingUnit'],
+): number | null {
+  const firstNutrientLine = lines.findIndex((line) => (
+    /\b(?:energy|calories|protein|carbohydrates?|total\s*fats?)\b/.test(line)
+  ));
+  const headerText = lines
+    .slice(0, firstNutrientLine === -1 ? Math.min(lines.length, 8) : firstNutrientLine)
+    .join(' ');
+  const columns = Array.from(
+    headerText.matchAll(/amount\s+per\s+(?:pack|serving)|per\s*(?:serve|serving)|per\s*(\d{1,4})\s*(g|ml|m)\b/g),
+    (match) => {
+      if (match[1] === undefined) {
+        return { kind: 'serving' as const, index: match.index ?? 0 };
+      }
+
+      const unit = match[2] === 'g' ? 'g' : 'ml';
+      const value = parseNumber(match[1]);
+      return {
+        kind: unit === servingUnit && value === servingBase
+          ? 'serving' as const
+          : unit === servingUnit && value === 100
+            ? 'per100' as const
+            : 'other' as const,
+        index: match.index ?? 0,
+      };
+    },
+  ).sort((a, b) => a.index - b.index);
+
+  if (!columns.length) return null;
+
+  const servingIndex = columns.findIndex((column) => column.kind === 'serving');
+  if (servingIndex !== -1) return servingIndex;
+
+  const per100Index = columns.findIndex((column) => column.kind === 'per100');
+  if (servingBase === 100 && per100Index !== -1) return per100Index;
 
   return null;
 }
@@ -153,6 +219,7 @@ export function parseNutrition(rawText: string): ParsedNutritionResult {
   let servingBase = 100;
   let servingUnit: ParsedNutritionResult['servingUnit'] = /\bml\b/.test(text) ? 'ml' : 'g';
   const servingMatch =
+    text.match(/per\s*(\d{1,4})\s*(g|ml|m)\s*serving\s*size\b/) ||
     text.match(/amount\s+per\s+(?:pack|serving)[\s\S]{0,80}?serving\s*size[^\d]*(\d{1,4})\s*(g|ml|m)\b/) ||
     text.match(/serving\s*size[^\d]*(\d{1,4})\s*(g|ml|m)\b/) ||
     text.match(/per\s*(\d{1,4})\s*(g|ml|m)\b/) ||
@@ -162,6 +229,7 @@ export function parseNutrition(rawText: string): ParsedNutritionResult {
     servingUnit = servingMatch[2] === 'g' ? 'g' : 'ml';
     confidence.servingBase = true;
   }
+  const servingColumnIndex = detectServingColumnIndex(lines, servingBase, servingUnit);
 
   const pickByLine = (
     aliases: RegExp[],
@@ -171,7 +239,7 @@ export function parseNutrition(rawText: string): ParsedNutritionResult {
     const numbers = numbersFromLine(lines, aliases);
     if (numbers) {
       confidence[field] = true;
-      return repairTableRowValue(numbers, nutrient, servingBase, tableHasPer100Column);
+      return repairTableRowValue(numbers, nutrient, servingBase, tableHasPer100Column, servingColumnIndex);
     }
 
     return 0;

@@ -8,6 +8,9 @@ import { Toaster } from '@/components/ui/sonner';
 export const metadata: Metadata = {
   title: 'Nutrition Tracker',
   description: 'Track your daily calorie & nutrient intake',
+  icons: {
+    icon: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
