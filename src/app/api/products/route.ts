@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { requireUser } from '@/lib/auth';
 
 const productSchema = z.object({
   name: z.string().min(1).max(200),
@@ -17,23 +18,34 @@ const productSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const search = req.nextUrl.searchParams.get('q')?.trim();
+  try {
+    const user = await requireUser();
+    const search = req.nextUrl.searchParams.get('q')?.trim();
 
-  const products = await prisma.product.findMany({
-    where: search ? { name: { contains: search } } : undefined,
-    orderBy: { createdAt: 'desc' },
-  });
+    const products = await prisma.product.findMany({
+      where: {
+        userId: user.id,
+        ...(search ? { name: { contains: search } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-  return NextResponse.json(products);
+    return NextResponse.json(products);
+  } catch (e) {
+    if (e instanceof Response) return e;
+    throw e;
+  }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const user = await requireUser();
     const data = productSchema.parse(body);
-    const product = await prisma.product.create({ data });
+    const product = await prisma.product.create({ data: { ...data, userId: user.id } });
     return NextResponse.json(product, { status: 201 });
   } catch (e) {
+    if (e instanceof Response) return e;
     if (e instanceof z.ZodError) {
       return NextResponse.json({ error: 'Validation failed', issues: e.issues }, { status: 400 });
     }

@@ -1,203 +1,409 @@
 # Nutrition Tracker
 
-A personal calorie and nutrition tracking web app. Upload a photo of a packaged-food nutrition label, extract the values via OCR, save the product, and log meals to track your daily intake.
+A full-stack calorie and nutrition tracking web app for saving products, scanning nutrition labels and barcodes, logging meals, tracking daily targets, and reviewing/editing history.
 
-Built with Next.js 14 (App Router), TypeScript, Tailwind, Shadcn UI, Prisma + SQLite, Tesseract.js, and React Query.
+Live production app:
+
+https://calorie-tracker-nu-smoky.vercel.app
+
+Built with Next.js 14 App Router, TypeScript, Tailwind CSS, Prisma, NextAuth Google sign-in, React Query, Tesseract.js, ZXing, Vercel Blob, Neon Postgres, and Vercel.
 
 ---
 
 ## Features
 
-- 📷 **OCR upload** — snap or upload a nutrition label; values are extracted automatically
-- ✏️ **Editable confirmation** — review and correct OCR output before saving
-- 🍽️ **Meal logging** — pick product, enter grams, choose meal; nutrients are calculated proportionally
-- 📊 **Dashboard** — daily totals (calories, protein, carbs, fat, fiber, sugar, sodium) + per-meal breakdown
-- 📅 **Calendar history** — browse any past day
-- 🌗 **Dark mode** + 📱 **mobile responsive** (bottom tab bar on phones)
+- Public landing page for first-time and returning users
+- Google sign-up and login with user-scoped data
+- Protected dashboard, products, meal logging, calendar, profile, and edit pages
+- Product library with create, edit, delete, and search
+- Nutrition label OCR upload with editable extracted values
+- Barcode camera scanning with OpenFoodFacts lookup
+- Image uploads stored in Vercel Blob in production
+- Meal logging that stays on the log screen after save for fast repeated entries
+- Calendar history with editable previous meal logs
+- Add missed meals to previous dates from the calendar
+- Daily calorie target progress card with remaining/over-target state
+- Profile page with age, weight, height, gender, activity level, maintenance calories, and target calories
+- Maintenance calorie calculation using Mifflin-St Jeor with Calculator.net-style activity multipliers
+- PWA/home-screen support for Android and iPhone
+- Dark mode and responsive mobile navigation
 
 ---
 
-## Quick start
+## Quick Start
 
-Prerequisites: **Node.js 18.17+** (20+ recommended) and **npm**.
+Prerequisites:
+
+- Node.js 18.17+; Node 20+ recommended
+- npm
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Create the SQLite database from the Prisma schema
-npx prisma migrate dev --name init
-
-# 3. (Optional) Seed sample products and meal entries for today
-npm run db:seed
-
-# 4. Run the dev server
+npx prisma migrate dev
 npm run dev
 ```
 
-Open <http://localhost:5000>.
+Open:
 
-The SQLite database lives at `prisma/dev.db` (created on first migrate). Delete it any time to start fresh and re-run `prisma migrate dev`.
+```text
+http://localhost:5000
+```
+
+The local app uses SQLite via `prisma/schema.prisma`. The local database is `prisma/dev.db`.
 
 ---
 
-## Useful scripts
+## Environment Variables
+
+Create a local `.env` file. Do not commit secrets.
+
+```env
+DATABASE_URL="file:./dev.db"
+AUTH_SECRET="replace-with-a-random-secret"
+NEXTAUTH_URL="http://localhost:5000"
+GOOGLE_CLIENT_ID="your-google-oauth-client-id"
+GOOGLE_CLIENT_SECRET="your-google-oauth-client-secret"
+```
+
+Optional for local image uploads to use Vercel Blob instead of `public/uploads`:
+
+```env
+BLOB_READ_WRITE_TOKEN="your-vercel-blob-token"
+```
+
+Production on Vercel should include:
+
+```env
+DATABASE_URL="postgresql://..."
+AUTH_SECRET="replace-with-a-random-secret"
+NEXTAUTH_URL="https://calorie-tracker-nu-smoky.vercel.app"
+APP_URL="https://calorie-tracker-nu-smoky.vercel.app"
+GOOGLE_CLIENT_ID="your-google-oauth-client-id"
+GOOGLE_CLIENT_SECRET="your-google-oauth-client-secret"
+BLOB_READ_WRITE_TOKEN="your-vercel-blob-token"
+```
+
+Google OAuth redirect URIs:
+
+```text
+http://localhost:5000/api/auth/callback/google
+https://calorie-tracker-nu-smoky.vercel.app/api/auth/callback/google
+```
+
+---
+
+## Useful Scripts
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Generate Prisma client + production build |
-| `npm run start` | Run the production build |
-| `npm run db:migrate` | Apply schema changes & regenerate the client |
-| `npm run db:seed` | Reset & re-seed sample data |
-| `npm run db:studio` | Open Prisma Studio (browse the DB in your browser) |
+| `npm run dev` | Start local dev server on `localhost:5000` |
+| `npm run build` | Generate Prisma client and build Next.js |
+| `npm run start` | Run the production build locally |
+| `npm run vercel-build` | Push Postgres schema, generate Postgres Prisma client, and build for Vercel |
+| `npm run db:migrate` | Apply local SQLite schema changes |
+| `npm run db:seed` | Seed local sample data |
+| `npm run db:studio` | Open Prisma Studio |
 
 ---
 
-## Architecture overview
+## App Routes
 
-Single Next.js App Router project — frontend and API live together.
+| Route | Purpose |
+|---|---|
+| `/` | Public landing page |
+| `/login` | Google login |
+| `/signup` | Google sign-up entry |
+| `/dashboard` | Protected daily dashboard |
+| `/products` | Product library |
+| `/products/new` | Add product by OCR, barcode, or manual entry |
+| `/products/[id]/edit` | Edit product nutrition details |
+| `/meals/new` | Log meals for today |
+| `/meals/new?date=YYYY-MM-DD` | Log a missed meal for a previous date |
+| `/calendar` | History, daily totals, edit previous logs, add missed meals |
+| `/profile` | Account details and calorie goals |
 
+---
+
+## Architecture
+
+```text
+Browser
+  React + React Query + Tailwind
+        |
+        v
+Next.js App Router
+  Pages, components, middleware, API routes
+        |
+        +--> NextAuth Google provider
+        |
+        +--> Prisma
+        |      +--> SQLite locally
+        |      +--> Neon Postgres in production
+        |
+        +--> Tesseract.js + sharp for OCR
+        |
+        +--> OpenFoodFacts for barcode nutrition lookup
+        |
+        +--> Vercel Blob for uploaded label images in production
 ```
-Browser (React + React Query)
-        │
-        ▼
-Next.js API routes  ──►  Prisma  ──►  SQLite (./prisma/dev.db)
-        │
-        └──►  Tesseract.js + sharp  (OCR pipeline, server-side)
+
+Local and production use separate Prisma schemas:
+
+- `prisma/schema.prisma` uses SQLite for local development.
+- `prisma/schema.postgres.prisma` uses Postgres for Vercel/Neon.
+
+---
+
+## Database Model
+
+Main tables:
+
+- `User`
+- `Account`
+- `Session`
+- `VerificationToken`
+- `Product`
+- `MealEntry`
+
+Important relationships:
+
+- One user has many products.
+- One user has many meal entries.
+- A product belongs to a user.
+- A meal entry belongs to a user and product.
+
+Queries are user-scoped so users only see their own products, meals, history, and totals.
+
+`MealEntry` stores calculated nutrients at log time:
+
+- `calculatedCalories`
+- `calculatedProtein`
+- `calculatedCarbs`
+- `calculatedFat`
+- `calculatedFiber`
+- `calculatedSugar`
+- `calculatedSodium`
+
+This keeps historical logs stable even if a product is edited later.
+
+---
+
+## Product Creation
+
+Products can be created three ways:
+
+1. Manual entry.
+2. Nutrition label upload with OCR.
+3. Barcode camera scan with OpenFoodFacts lookup.
+
+Nutrition values are always editable before saving.
+
+Product fields include:
+
+- name
+- serving base
+- serving unit: `g` or `ml`
+- calories
+- protein
+- carbs
+- fat
+- fiber
+- sugar
+- sodium
+- image URL
+
+Images are not stored in Neon as binary data. Neon stores only `imageUrl`.
+
+- In production, uploaded label images go to Vercel Blob.
+- Locally, if Blob is not configured, uploads go to `public/uploads`.
+- Barcode product images come from OpenFoodFacts as external URLs.
+
+---
+
+## Meal Logging And History
+
+The meal logging flow supports fast repeated entry:
+
+- Pick a product.
+- Enter quantity.
+- Choose meal type.
+- Click Log meal.
+- Stay on the same screen and continue adding more meals.
+
+Calendar/history supports:
+
+- selecting previous dates
+- viewing totals for that day
+- editing existing meal entries
+- adding missed meals to a previous date
+
+Editing an old meal updates the existing `MealEntry` row. Adding a missed meal creates a new row for the selected date.
+
+---
+
+## Calorie Goals
+
+The profile page stores:
+
+- name
+- email
+- age
+- weight
+- height in cm
+- gender
+- activity level
+- maintenance calories
+- target calories
+
+Maintenance calories use the Mifflin-St Jeor formula:
+
+```text
+Male BMR   = 10 * weightKg + 6.25 * heightCm - 5 * age + 5
+Female BMR = 10 * weightKg + 6.25 * heightCm - 5 * age - 161
 ```
 
-**Why these choices:**
+Then BMR is multiplied by the selected activity multiplier:
 
-- **Next.js API routes** instead of a separate Express server: simpler for a single-user app and identical deployment story.
-- **SQLite + Prisma** for zero-config local dev. Schema is portable to Postgres for Vercel by changing the `provider`.
-- **React Query** for all server state (caching + automatic invalidation), so we don't need Zustand.
-- **Tesseract runs server-side** in `/api/ocr`. Running it client-side would add ~10MB to the bundle.
+| Level | Multiplier |
+|---|---:|
+| Sedentary: little or no exercise | 1.2 |
+| Light: exercise 1-3 times/week | 1.375 |
+| Moderate: exercise 4-5 times/week | 1.465 |
+| Active: daily exercise or intense exercise 3-4 times/week | 1.55 |
+| Very Active: intense exercise 6-7 times/week | 1.725 |
+| Extra Active: very intense exercise daily or physical job | 1.9 |
 
----
-
-## Database schema
-
-Two tables. See `prisma/schema.prisma`.
-
-**Product** — your library of foods:
-`id, name, servingBase, calories, protein, carbs, fat, fiber, sugar, sodium, imageUrl, createdAt, updatedAt`
-
-**MealEntry** — one logged consumption:
-`id, date, mealType, quantityInGrams, calculatedCalories..calculatedSodium, productId, createdAt`
-
-Nutrients on `MealEntry` are **pre-calculated and stored** rather than computed on read. This means if you later edit a product's nutrition values, historical entries stay true to what was logged at the time — the same approach apps like MyFitnessPal use.
+The dashboard shows consumed calories vs target calories, percentage completed, and remaining or over-target calories.
 
 ---
 
-## OCR approach
+## PWA / Add To Home Screen
 
-`src/lib/ocr.ts` runs three steps:
+The app includes home-screen install support:
 
-1. **Preprocess** with `sharp` — resize to 1600px max, grayscale, normalize contrast, sharpen. This significantly improves Tesseract accuracy on phone photos.
-2. **OCR** with Tesseract.js (English) — returns raw text.
-3. **Pattern parse** — for each nutrient, search the text for keyword aliases and grab the nearest number with the correct unit. Handles:
-   - `calories` / `energy` / `kcal` (and kJ → kcal conversion)
-   - `protein`, `total carbohydrate` / `carbs`, `total fat` / `fat`
-   - `dietary fiber` / `fibre`, `total sugars` / `sugar`
-   - `sodium` in mg, in g (converted), or derived from `salt × 400`
-   - `per 100g`, `serving size 32g`, `(100g)` — auto-detects the serving base
+- `public/manifest.webmanifest`
+- `public/icon-192.png`
+- `public/icon-512.png`
+- `public/apple-touch-icon.png`
+- metadata for theme color, manifest, and Apple web app mode
 
-OCR is never 100% accurate, so values pre-fill an editable form and the user confirms before saving.
+Android Chrome can show install/add-to-home-screen prompts. iPhone users can use Safari:
 
----
-
-## Folder structure
-
+```text
+Share -> Add to Home Screen
 ```
+
+The installed app starts at `/dashboard`.
+
+---
+
+## API Routes
+
+| Route | Methods | Purpose |
+|---|---|---|
+| `/api/auth/[...nextauth]` | NextAuth | Google auth |
+| `/api/products` | GET, POST | Product list and create |
+| `/api/products/[id]` | GET, PATCH, DELETE | Product detail, update, delete |
+| `/api/meals` | GET, POST | Meals by date, create meal entry |
+| `/api/meals/[id]` | PATCH, DELETE | Edit or delete meal entry |
+| `/api/ocr` | POST | OCR nutrition label image |
+| `/api/upload` | POST | Upload label image |
+| `/api/barcode/[barcode]` | GET | Lookup barcode via OpenFoodFacts |
+| `/api/profile` | GET, PATCH | Read/update profile |
+| `/api/profile/calculate-maintenance` | POST | Calculate and save maintenance calories |
+
+---
+
+## Folder Structure
+
+```text
 src/
-├── app/
-│   ├── layout.tsx, page.tsx           Root layout + Dashboard
-│   ├── products/
-│   │   ├── page.tsx                   Product Library
-│   │   ├── new/page.tsx               Add Product (OCR flow)
-│   │   └── [id]/edit/page.tsx         Edit Product
-│   ├── meals/new/page.tsx             Log a meal
-│   ├── calendar/page.tsx              Calendar history
-│   └── api/
-│       ├── products/route.ts          GET, POST
-│       ├── products/[id]/route.ts     GET, PATCH, DELETE
-│       ├── meals/route.ts             GET (by date), POST
-│       ├── meals/[id]/route.ts        DELETE
-│       ├── ocr/route.ts               OCR endpoint
-│       └── upload/route.ts            Image upload
-├── components/
-│   ├── ui/                            Shadcn primitives
-│   ├── dashboard/, products/, meals/, shared/
-├── lib/
-│   ├── prisma.ts                      Prisma singleton
-│   ├── ocr.ts                         Tesseract + parser
-│   ├── nutrition.ts                   Calculation helpers
-│   ├── query-client.tsx               React Query provider
-│   └── utils.ts
-├── hooks/
-│   ├── use-products.ts
-│   └── use-meals.ts
-└── types/index.ts
+  app/
+    api/
+      auth/[...nextauth]/
+      barcode/[barcode]/
+      meals/
+      ocr/
+      products/
+      profile/
+      upload/
+    calendar/
+    dashboard/
+    login/
+    meals/new/
+    products/
+    profile/
+    signup/
+    layout.tsx
+    page.tsx
+  components/
+    dashboard/
+    products/
+    shared/
+    ui/
+  hooks/
+    use-meals.ts
+    use-products.ts
+  lib/
+    auth.ts
+    nutrition.ts
+    nutrition-label-parser.ts
+    ocr.ts
+    prisma.ts
+    profile.ts
+    query-client.tsx
+    utils.ts
+  types/
+    index.ts
+    next-auth.d.ts
 
 prisma/
-├── schema.prisma
-└── seed.ts
+  schema.prisma
+  schema.postgres.prisma
+  seed.ts
 
-public/uploads/    (label images saved here in local dev)
+public/
+  favicon.svg
+  manifest.webmanifest
+  icon-192.png
+  icon-512.png
+  apple-touch-icon.png
+  uploads/
 ```
 
 ---
 
-## Deploying to Vercel later
+## Deployment
 
-The app is structured to deploy cleanly. Two changes needed:
+The project is deployed on Vercel.
 
-**1. Swap SQLite for Postgres.** In `prisma/schema.prisma`:
+`vercel.json` uses:
 
-```prisma
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+```json
+{
+  "buildCommand": "npm run vercel-build"
 }
 ```
 
-Then set `DATABASE_URL` in Vercel env vars to a hosted Postgres URL (Vercel Postgres, Neon, Supabase). Run `npx prisma migrate deploy` as part of the build.
+Production build steps:
 
-**2. Swap local file uploads for blob storage.** Vercel's filesystem is read-only at runtime. Replace `src/app/api/upload/route.ts` with `@vercel/blob`:
+1. Push `prisma/schema.postgres.prisma` to Neon Postgres.
+2. Generate Prisma Client against Postgres schema.
+3. Build Next.js.
 
-```ts
-import { put } from '@vercel/blob';
+Deploy command:
 
-export async function POST(req: NextRequest) {
-  const formData = await req.formData();
-  const file = formData.get('image') as File;
-  const blob = await put(file.name, file, { access: 'public' });
-  return NextResponse.json({ url: blob.url });
-}
+```bash
+npx --yes vercel@latest deploy --prod
 ```
 
-Everything else — the API contracts, components, OCR — works as-is.
-
 ---
 
-## Tech stack
+## Notes
 
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Shadcn UI, Lucide icons
-- **State:** React Query (TanStack Query v5)
-- **Forms:** react-hook-form + Zod
-- **Backend:** Next.js API routes (Node runtime)
-- **Database:** SQLite + Prisma
-- **OCR:** Tesseract.js + sharp (image preprocessing)
-- **Theme:** next-themes (light/dark/system)
-- **Toasts:** Sonner
-- **Date picker:** react-day-picker
-
----
-
-## Notes & gotchas
-
-- The first OCR request on a fresh install can take ~10–20s because Tesseract downloads its language data. Subsequent requests are much faster.
-- For best OCR results: well-lit, flat, in-focus photos. Crop close to the nutrition table when you can.
-- The Prisma client is generated automatically via the `postinstall` script — no extra step needed after `npm install`.
-- If you see "Prisma client is out of sync" after editing the schema, run `npm run db:migrate`.
+- OCR is helpful but not perfect. Users should review extracted values before saving.
+- Barcode data comes from OpenFoodFacts and can be incomplete or slightly different from the physical package.
+- Sodium is stored in mg.
+- Serving unit can be `g` or `ml`; nutrient fields remain in grams except sodium, which remains mg.
+- The app stores image URLs, not image binaries, in the database.
+- If local CSS or generated assets look stale, stop the dev server, delete `.next`, and restart `npm run dev`.

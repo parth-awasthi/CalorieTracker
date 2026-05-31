@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { requireUser } from '@/lib/auth';
 
 const updateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
@@ -17,18 +18,28 @@ const updateSchema = z.object({
 });
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const product = await prisma.product.findUnique({ where: { id: params.id } });
-  if (!product) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  return NextResponse.json(product);
+  try {
+    const user = await requireUser();
+    const product = await prisma.product.findFirst({ where: { id: params.id, userId: user.id } });
+    if (!product) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json(product);
+  } catch (e) {
+    if (e instanceof Response) return e;
+    throw e;
+  }
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    const user = await requireUser();
     const body = await req.json();
     const data = updateSchema.parse(body);
+    const existing = await prisma.product.findFirst({ where: { id: params.id, userId: user.id } });
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     const product = await prisma.product.update({ where: { id: params.id }, data });
     return NextResponse.json(product);
   } catch (e) {
+    if (e instanceof Response) return e;
     if (e instanceof z.ZodError) {
       return NextResponse.json({ error: 'Validation failed', issues: e.issues }, { status: 400 });
     }
@@ -39,9 +50,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    const user = await requireUser();
+    const existing = await prisma.product.findFirst({ where: { id: params.id, userId: user.id } });
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     await prisma.product.delete({ where: { id: params.id } });
     return NextResponse.json({ success: true });
   } catch (e: any) {
+    if (e instanceof Response) return e;
     // Foreign key restriction from meal entries
     if (e?.code === 'P2003' || e?.code === 'P2014') {
       return NextResponse.json(

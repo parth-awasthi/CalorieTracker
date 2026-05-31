@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Search, Check } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -19,12 +19,23 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useProducts } from '@/hooks/use-products';
 import { useCreateMealEntry } from '@/hooks/use-meals';
 import { MEAL_LABELS, MEAL_TYPES, calculateNutrients, type MealType } from '@/lib/nutrition';
-import { cn, formatNumber } from '@/lib/utils';
+import { cn, formatDate, formatNumber, toDateKey } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { Product } from '@/types';
 
 export default function NewMealEntryPage() {
-  const router = useRouter();
+  return (
+    <Suspense>
+      <NewMealEntryForm />
+    </Suspense>
+  );
+}
+
+function NewMealEntryForm() {
+  const searchParams = useSearchParams();
+  const dateParam = searchParams.get('date');
+  const logDate = useMemo(() => parseDateParam(dateParam), [dateParam]);
+  const isToday = toDateKey(logDate) === toDateKey(new Date());
   const [search, setSearch] = useState('');
   const { data: products, isLoading } = useProducts(search);
   const [selected, setSelected] = useState<Product | null>(null);
@@ -54,12 +65,13 @@ export default function NewMealEntryPage() {
     try {
       await createMutation.mutateAsync({
         productId: selected.id,
-        date: new Date(),
+        date: logDate,
         mealType,
         quantityInGrams: q,
       });
-      toast.success(`Added to ${MEAL_LABELS[mealType]}`);
-      router.push('/');
+      toast.success(`Added to ${MEAL_LABELS[mealType]} for ${formatDate(logDate)}`);
+      setSelected(null);
+      setQuantity('100');
     } catch (e: any) {
       toast.error(e.message || 'Failed to log');
     }
@@ -69,7 +81,9 @@ export default function NewMealEntryPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Log a Meal</h1>
-        <p className="text-sm text-muted-foreground">Quick entry for today.</p>
+        <p className="text-sm text-muted-foreground">
+          {isToday ? 'Quick entry for today.' : `Adding to ${formatDate(logDate)}.`}
+        </p>
       </header>
 
       <Card>
@@ -178,9 +192,16 @@ export default function NewMealEntryPage() {
             </div>
           )}
 
-          <Button className="w-full" onClick={handleSave} disabled={createMutation.isPending}>
-            {createMutation.isPending ? 'Saving…' : 'Log meal'}
-          </Button>
+          <div className="space-y-2">
+            <Button className="w-full" onClick={handleSave} disabled={createMutation.isPending}>
+              {createMutation.isPending ? 'Saving...' : 'Log meal'}
+            </Button>
+            <Button asChild variant="outline" className="w-full">
+              <Link href={isToday ? '/dashboard' : '/calendar'}>
+                Back to {isToday ? 'dashboard' : 'history'}
+              </Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -202,4 +223,11 @@ function getDefaultMealType(): MealType {
   if (h < 15) return 'LUNCH';
   if (h < 21) return 'DINNER';
   return 'SNACKS';
+}
+
+function parseDateParam(value: string | null): Date {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date();
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
 }

@@ -14,11 +14,9 @@ export function formatNumber(n: number, decimals = 1): string {
 
 export function formatDate(d: Date | string): string {
   const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${weekdays[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
 }
 
 export function toDateKey(d: Date): string {

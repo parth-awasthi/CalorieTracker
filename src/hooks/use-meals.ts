@@ -54,3 +54,25 @@ export function useDeleteMealEntry() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['meals'] }),
   });
 }
+
+export function useUpdateMealEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      id: string;
+      productId: string;
+      mealType: MealType;
+      quantityInGrams: number;
+    }) =>
+      fetchJson<MealEntryWithProduct>(`/api/meals/${data.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: data.productId,
+          mealType: data.mealType,
+          quantityInGrams: data.quantityInGrams,
+        }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['meals'] }),
+  });
+}

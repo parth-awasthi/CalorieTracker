@@ -1,14 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
+import { Plus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Calendar } from '@/components/ui/calendar';
 import { NutrientStats } from '@/components/dashboard/nutrient-stats';
 import { MealSection } from '@/components/dashboard/meal-section';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import { useMealsForDate } from '@/hooks/use-meals';
 import { EMPTY_TOTALS, MEAL_TYPES, sumMealEntries, type MealType } from '@/lib/nutrition';
-import { formatDate } from '@/lib/utils';
+import { formatDate, toDateKey } from '@/lib/utils';
 
 export default function CalendarPage() {
   const [date, setDate] = useState<Date>(new Date());
@@ -48,7 +51,15 @@ export default function CalendarPage() {
 
         <div className="space-y-6">
           <div>
-            <h2 className="mb-3 text-lg font-semibold">{formatDate(date)}</h2>
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-lg font-semibold">{formatDate(date)}</h2>
+              <Button asChild size="sm">
+                <Link href={`/meals/new?date=${toDateKey(date)}`}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add meal for this date
+                </Link>
+              </Button>
+            </div>
             {isLoading ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
                 {Array.from({ length: 7 }).map((_, i) => (
@@ -62,7 +73,7 @@ export default function CalendarPage() {
 
           <div className="grid gap-4 md:grid-cols-2">
             {MEAL_TYPES.map((t) => (
-              <MealSection key={t} mealType={t} entries={grouped[t] ?? []} />
+              <MealSection key={t} mealType={t} entries={grouped[t] ?? []} canEdit />
             ))}
           </div>
         </div>
